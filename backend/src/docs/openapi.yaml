@@ -1,0 +1,296 @@
+openapi: 3.0.3
+info:
+  title: Diplomas API
+  version: 1.0.0
+  description: REST API для роботи з дипломами, користувачами та інвайтами.
+
+servers:
+  - url: /api
+    description: Локальний сервер
+
+tags:
+  - name: Auth
+    description: Авторизація та реєстрація
+  - name: Diplomas
+    description: Операції з дипломами
+  - name: Invites
+    description: Управління інвайтами (тільки адмін)
+  - name: Catalog
+    description: Довідники факультетів та спеціальностей
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  parameters:
+    PageParam:
+      in: query
+      name: page
+      schema: { type: integer, minimum: 1, default: 1 }
+      description: Номер сторінки
+    PerPageParam:
+      in: query
+      name: perPage
+      schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+      description: Кількість записів на сторінку
+    SortParam:
+      in: query
+      name: sort
+      schema: { type: string, enum: [createdAt, year, studentName, diplomaNumber], default: createdAt }
+      description: Поле сортування
+    DirParam:
+      in: query
+      name: dir
+      schema: { type: string, enum: [asc, desc], default: desc }
+      description: Напрям сортування
+    QParam:
+      in: query
+      name: q
+      schema: { type: string }
+      description: Пошук за ПІБ/номером
+    YearParam:
+      in: query
+      name: year
+      schema: { type: integer }
+      description: Рік випуску
+    FacultyParam:
+      in: query
+      name: faculty
+      schema: { type: string }
+      description: Факультет
+    SpecialtyParam:
+      in: query
+      name: specialty
+      schema: { type: string }
+      description: Спеціальність
+    ScopeParam:
+      in: query
+      name: scope
+      schema: { type: string, enum: [verified, unverified, all], default: verified }
+      description: Фільтр за верифікацією
+
+  schemas:
+    ApiError:
+      type: object
+      required: [status, message]
+      properties:
+        status: { type: string, example: "error" }
+        message: { type: string, example: "Помилка валідації" }
+        errors:
+          type: object
+          additionalProperties: true
+
+    Diploma:
+      type: object
+      properties:
+        id: { type: string }
+        studentName: { type: string }
+        faculty: { type: string, nullable: true }
+        specialty: { type: string, nullable: true }
+        year: { type: integer }
+        diplomaNumber: { type: string }
+        fileUrl: { type: string }
+        isVerified: { type: boolean }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+
+    DiplomaList:
+      type: object
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/Diploma" }
+        total: { type: integer }
+        page: { type: integer }
+        perPage: { type: integer }
+        admin: { type: boolean }
+
+    Invite:
+      type: object
+      properties:
+        id: { type: string }
+        code: { type: string }
+        expiresAt: { type: string, format: date-time, nullable: true }
+        usedAt: { type: string, format: date-time, nullable: true }
+        usedById: { type: string, nullable: true }
+
+security:
+  - bearerAuth: []
+
+paths:
+  /auth/register:
+    post:
+      tags: [Auth]
+      summary: Реєстрація за інвайтом
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password, inviteCode]
+              properties:
+                email: { type: string }
+                password: { type: string, format: password }
+                inviteCode: { type: string }
+      responses:
+        "201": { description: Користувача створено }
+        "400":
+          description: Помилка інвайту чи валідації
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiError" }
+
+  /invites:
+    get:
+      tags: [Invites]
+      summary: Список інвайтів (адмін)
+      responses:
+        "200":
+          description: Ок
+        "403":
+          description: Лише для адміна
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiError" }
+    post:
+      tags: [Invites]
+      summary: Створити інвайт (адмін)
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                minutes: { type: integer, description: Час дії у хвилинах }
+      responses:
+        "201": { description: Створено }
+        "403":
+          description: Лише для адміна
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiError" }
+
+  /diplomas:
+    get:
+      tags: [Diplomas]
+      summary: Пошук дипломів
+      parameters:
+        - $ref: "#/components/parameters/PageParam"
+        - $ref: "#/components/parameters/PerPageParam"
+        - $ref: "#/components/parameters/SortParam"
+        - $ref: "#/components/parameters/DirParam"
+        - $ref: "#/components/parameters/QParam"
+        - $ref: "#/components/parameters/YearParam"
+        - $ref: "#/components/parameters/FacultyParam"
+        - $ref: "#/components/parameters/SpecialtyParam"
+        - $ref: "#/components/parameters/ScopeParam"
+      responses:
+        "200":
+          description: Ок
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DiplomaList" }
+    post:
+      tags: [Diplomas]
+      summary: Створити диплом
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [studentName, year, diplomaNumber, file, specialty]
+              properties:
+                studentName: { type: string }
+                faculty: { type: string }
+                specialty: { type: string }
+                year: { type: integer }
+                diplomaNumber: { type: string }
+                file: { type: string, format: binary }
+      responses:
+        "201": { description: Створено }
+        "400":
+          description: Помилка валідації
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiError" }
+        "401": { description: Неавторизовано }
+
+  /diplomas/{id}:
+    get:
+      tags: [Diplomas]
+      summary: Деталі диплома
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        "200": { description: Ок }
+        "404": { description: Не знайдено }
+    put:
+      tags: [Diplomas]
+      summary: Оновити диплом
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                studentName: { type: string }
+                faculty: { type: string }
+                specialty: { type: string }
+                year: { type: integer }
+                diplomaNumber: { type: string }
+                isVerified: { type: boolean }
+      responses:
+        "200": { description: Оновлено }
+        "404": { description: Не знайдено }
+    delete:
+      tags: [Diplomas]
+      summary: Видалити диплом
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        "204": { description: Видалено }
+        "404": { description: Не знайдено }
+
+  /diplomas/{id}/file:
+    get:
+      tags: [Diplomas]
+      summary: Завантажити файл диплома
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        "200": { description: Файл }
+        "404": { description: Не знайдено }
+
+  /diplomas/filters:
+    get:
+      tags: [Catalog]
+      summary: Списки факультетів та спеціальностей
+      responses:
+        "200": { description: Ок }
+
+  /diplomas/faculties:
+    get:
+      tags: [Catalog]
+      summary: Ієрархія факультетів та спеціальностей
+      responses:
+        "200": { description: Ок }

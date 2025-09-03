@@ -1,0 +1,43 @@
+{
+  "name": "diplomas-api",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "nodemon src/index.js",
+    "start": "node src/index.js",
+    "db:migrate": "prisma migrate dev",
+    "db:deploy": "prisma migrate deploy",
+    "db:generate": "prisma generate",
+    "test:db:up": "docker run --name diplomas_pg_test -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=diplomas_test -p 5433:5432 -d postgres:15 || exit 0",
+    "test:db:stop": "docker stop diplomas_pg_test || exit 0",
+    "test:db:rm": "docker rm -f diplomas_pg_test || exit 0",
+    "pretest": "dotenv -e .env.test -- prisma generate && dotenv -e .env.test -- prisma migrate deploy",
+    "test": "cross-env NODE_ENV=test node --experimental-vm-modules ./node_modules/jest/bin/jest.js --runInBand --detectOpenHandles",
+    "test:watch": "npm run test -- --watch"
+  },
+  "dependencies": {
+    "@prisma/client": "^5.22.0",
+    "bcrypt": "^6.0.0",
+    "bcryptjs": "^2.4.3",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "helmet": "^7.1.0",
+    "jsonwebtoken": "^9.0.2",
+    "morgan": "^1.10.0",
+    "multer": "^1.4.5-lts.1",
+    "swagger-ui-express": "^5.0.1",
+    "winston": "^3.17.0",
+    "winston-daily-rotate-file": "^5.0.0",
+    "yamljs": "^0.3.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "cross-env": "^10.0.0",
+    "dotenv-cli": "^10.0.0",
+    "jest": "^29.7.0",
+    "nodemon": "^3.0.1",
+    "prisma": "^5.22.0",
+    "supertest": "^6.3.4"
+  }
+}
