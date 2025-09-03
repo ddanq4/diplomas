@@ -332,20 +332,30 @@ router.post('/diplomas', acceptAnyFiles, async (req, res, next) => {
 });
 
 // UPDATE
-router.patch('/diplomas/:id', acceptAnyFiles, async (req, res, next) => {
-  try {
+router.patch('/diplomas/:id', upload.single('file'), async (req, res, next) => {  try {
     const id = idStr(req.params.id);
     if (!id || id === 'undefined' || id === 'null') return res.status(400).json({ message: 'Invalid id' });
 
     const existing = await prisma.diploma.findUnique({ where: { id } });
     if (!existing) return res.status(404).json({ message: 'Not found' });
+  const b = req.body || {};
+  const studentName   = b.studentName   ?? b.student_name;
+  const faculty       = b.faculty       ?? b.faculty_key;
+  const specialty     = b.specialty     ?? b.specialty_key;
+  const year          = b.year          ?? b.year_value;
+  const diplomaNumber = b.diplomaNumber ?? b.diploma_number;
+  const isVerified    = b.isVerified    ?? b.is_verified;
 
-    const data = {};
-    if (req.body.studentName)   data.studentName   = String(req.body.studentName);
-    if (req.body.year)          data.year          = intOr(req.body.year, existing.year);
-    if (req.body.diplomaNumber) data.diplomaNumber = String(req.body.diplomaNumber);
-    if (typeof req.body.isVerified !== 'undefined') data.isVerified = toBool(req.body.isVerified);
-
+  const data = {};
+  if (studentName !== undefined)   data.studentName   = String(studentName);
+  if (faculty !== undefined)       data.faculty       = faculty || null;
+  if (specialty !== undefined)     data.specialty     = specialty || null;
+  if (year !== undefined)          data.year          = Number(year);
+  if (diplomaNumber !== undefined) data.diplomaNumber = String(diplomaNumber);
+  if (isVerified !== undefined)    data.isVerified    = (isVerified==='true'||isVerified===true||isVerified==='1'||isVerified===1);
+  if (req.file) {
+              data.fileUrl = `/uploads/${req.file.filename}`;
+        }
     if (req.body.specialty) {
       const specKey = String(req.body.specialty).trim();
       const known = Object.values(FACULTIES).some(fac =>
