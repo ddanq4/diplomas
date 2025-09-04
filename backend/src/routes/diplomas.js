@@ -1,4 +1,3 @@
-// backend/src/routes/diplomas.js
 import express from 'express';
 import multer from 'multer';
 import path from 'path';
@@ -8,18 +7,15 @@ import { PrismaClient } from '@prisma/client';
 export const router = express.Router();
 const prisma = new PrismaClient();
 
-/* ========================= Директория для файлов ========================= */
 const uploadDir = path.join(process.cwd(), 'uploads');
 if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
 
-/* ========================= Лимиты из .env ========================= */
 const MAX_FILE_MB = Number(process.env.MAX_FILE_MB || 10);
 const MAX_FILE_BYTES = MAX_FILE_MB * 1024 * 1024;
 
 const ALLOWED_MIME = new Set(['application/pdf', 'image/jpeg', 'image/png']);
 const ALLOWED_EXT  = new Set(['.pdf', '.jpg', '.jpeg', '.png']);
 
-/* ========================= Multer (multipart) ========================= */
 const storage = multer.diskStorage({
   destination: (_req, _file, cb) => cb(null, uploadDir),
   filename: (_req, file, cb) => {
@@ -37,10 +33,8 @@ const upload = multer({
     cb(ok ? null : new Error('INVALID_FILE_TYPE'));
   },
 });
-// принимаем любые поля-файлы (не только "file")
 const acceptAnyFiles = upload.any();
 
-/* ========================= Утилиты ========================= */
 const toBool = (v) => v === true || v === 'true' || v === 1 || v === '1';
 const intOr = (v, d) => { const n = parseInt(v, 10); return Number.isFinite(n) ? n : d; };
 const idStr = (v) => String(v ?? '').trim();
@@ -61,13 +55,10 @@ const okType = (name, mime) =>
     ALLOWED_EXT.has((path.extname(name || '') || '').toLowerCase()) &&
     ALLOWED_MIME.has(String(mime || '').toLowerCase());
 
-/** Принять файл из multer/express-fileupload (multipart). Вернёт web-путь /uploads/... */
 function validateAndStoreFileFromAnySource(req) {
-  // 1) Multer — файл уже на диске и провалидирован
   if (req.file?.filename) return `/uploads/${req.file.filename}`;
   if (Array.isArray(req.files) && req.files[0]?.filename) return `/uploads/${req.files[0].filename}`;
 
-  // 2) express-fileupload (req.files — объект)
   if (req.files && typeof req.files === 'object' && !Array.isArray(req.files)) {
     const keys = Object.keys(req.files);
     if (!keys.length) return null;
@@ -78,7 +69,6 @@ function validateAndStoreFileFromAnySource(req) {
     const name = f?.name || 'upload';
     const mime = (f?.mimetype || '').toLowerCase();
 
-    // размер (возможные поля)
     let size = Number(f?.size || 0);
     if (!size && f?.tempFilePath) {
       try { size = fs.statSync(f.tempFilePath).size; } catch {}
@@ -102,7 +92,6 @@ function validateAndStoreFileFromAnySource(req) {
   return null;
 }
 
-/** Бэкап: принять файл из base64 (dataURL или чистая base64) в JSON-теле запроса */
 function validateAndStoreBase64FromBody(req) {
   const b64raw = req.body?.fileBase64 || req.body?.file || null;
   if (!b64raw) return null;
@@ -132,7 +121,6 @@ function validateAndStoreBase64FromBody(req) {
   return `/uploads/${filename}`;
 }
 
-/* ========================= Загрузка каталога FACULTIES ========================= */
 let FACULTIES = {};
 async function loadCatalog() {
   const tryPaths = [
@@ -147,7 +135,6 @@ async function loadCatalog() {
       const obj = mod?.FACULTIES || mod?.default || mod;
       if (obj && typeof obj === 'object' && Object.keys(obj).length) {
         FACULTIES = obj;
-        console.log('[CATALOG] Loaded from', p, '→', Object.keys(FACULTIES).length, 'faculties');
         return;
       }
     } catch (_e) {}
@@ -156,7 +143,6 @@ async function loadCatalog() {
 }
 await loadCatalog();
 
-/* ===== helper: найти факультет по ключу спеціальності ===== */
 function facultyBySpecialty(specKey) {
   const k = String(specKey || '').trim();
   if (!k) return null;
@@ -168,10 +154,6 @@ function facultyBySpecialty(specKey) {
   }
   return null;
 }
-
-/* =============================================================================
-   FILTERS / FACULTIES (ВАЖНО: идут раньше /diplomas/:id)
-============================================================================= */
 
 router.get('/diplomas/filters', async (_req, res, next) => {
   try {
@@ -218,10 +200,6 @@ router.get('/diplomas/faculties', async (_req, res, next) => {
     res.json({ faculties });
   } catch (e) { next(e); }
 });
-
-/* =============================================================================
-   CRUD
-============================================================================= */
 
 // LIST
 router.get('/diplomas', async (req, res, next) => {
@@ -357,21 +335,6 @@ router.patch('/diplomas/:id', acceptAnyFiles, async (req, res, next) => {
     const existing = await prisma.diploma.findUnique({ where: { id } });
     if (!existing) return res.status(404).json({ message: 'Not found' });
 
-    // --- диагностика того, что реально приходит ---
-    console.log('[PATCH diplomas] CT=', req.headers['content-type']);
-    console.log('[PATCH diplomas] has req.file =', !!req.file, ' has req.files =', Array.isArray(req.files) ? req.files.length : 0);
-    if (req.file) {
-      console.log('[PATCH diplomas] req.file =', {
-        fieldname: req.file.fieldname, filename: req.file.filename, path: req.file.path, size: req.file.size, mimetype: req.file.mimetype, originalname: req.file.originalname
-      });
-    } else if (Array.isArray(req.files) && req.files[0]) {
-      const f = req.files[0];
-      console.log('[PATCH diplomas] req.files[0] =', {
-        fieldname: f.fieldname, filename: f.filename, path: f.path, size: f.size, mimetype: f.mimetype, originalname: f.originalname
-      });
-    }
-
-    // --- поля (camel + snake) ---
     const b = req.body || {};
     const studentName   = b.studentName   ?? b.student_name;
     const faculty       = b.faculty       ?? b.faculty_key;
@@ -388,10 +351,8 @@ router.patch('/diplomas/:id', acceptAnyFiles, async (req, res, next) => {
     if (diplomaNumber !== undefined) data.diplomaNumber = String(diplomaNumber);
     if (isVerified !== undefined)    data.isVerified    = (isVerified==='true'||isVerified===true||isVerified==='1'||isVerified===1);
 
-    // === ФАЙЛ: сперва пытаемся через multer, если пусто — через express-fileupload/base64 ===
     let newFileUrl = null;
 
-// 1) Multer: req.file или req.files (array)
     if (req.file || (Array.isArray(req.files) && req.files.length)) {
       const f = req.file || req.files[0];
       const srcPath = f.path || (f.filename ? path.join(uploadDir, f.filename) : null);
@@ -404,7 +365,6 @@ router.patch('/diplomas/:id', acceptAnyFiles, async (req, res, next) => {
         else if (mt === 'application/pdf') ext = '.pdf';
         else ext = '.bin';
       }
-      // Кладём под фиксированным именем по id
       await fs.promises.mkdir(uploadDir, { recursive: true });
       const fixedAbs = path.join(uploadDir, `${id}${ext}`);
       if (srcPath) {
@@ -417,15 +377,11 @@ router.patch('/diplomas/:id', acceptAnyFiles, async (req, res, next) => {
         await fs.promises.writeFile(fixedAbs, f.buffer);
       }
       newFileUrl = `/uploads/${id}${ext}`;
-      console.log('[PATCH diplomas] multer ->', newFileUrl);
     }
 
-// 2) Если multer ничего не дал — пробуем express-fileupload (object) / base64
     if (!newFileUrl) {
-      // эта утилита уже у тебя есть и умеет: req.files (object, express-fileupload) + валидацию + сохранение
       const tmpRel = validateAndStoreFileFromAnySource(req) || validateAndStoreBase64FromBody(req);
       if (tmpRel) {
-        // можно оставить tmpRel как есть (проще всего)
         newFileUrl = tmpRel;
         console.log('[PATCH diplomas] fallback ->', newFileUrl,
             ' req.files type=', typeof req.files,
@@ -433,9 +389,8 @@ router.patch('/diplomas/:id', acceptAnyFiles, async (req, res, next) => {
       }
     }
 
-// 3) Если что-то сохранили — обновляем запись
     if (newFileUrl) {
-      data.fileUrl = newFileUrl;                 // ВАЖНО: имя поля как в Prisma (camelCase)
+      data.fileUrl = newFileUrl;
       if ('updatedAt' in existing) data.updatedAt = new Date();
       console.log('[PATCH diplomas] SET fileUrl =', data.fileUrl);
     } else {

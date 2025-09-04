@@ -1,4 +1,3 @@
-// backend/src/routes/invites.js
 import express from 'express';
 import { PrismaClient } from '@prisma/client';
 import jwt from 'jsonwebtoken';
@@ -10,7 +9,6 @@ const prisma = new PrismaClient();
 const router = express.Router();
 
 function isAdmin(req) {
-    // в requireAuth ми вже кладемо req.user; але дублюємо перевірку на випадок відсутності
     if (req?.user?.isAdmin === true) return true;
     try {
         const h = req.headers.authorization || '';
@@ -30,18 +28,17 @@ function ttlMinutesFrom(req) {
 }
 
 function genCode() {
-    // короткий читабельний код
     return Math.random().toString(36).slice(2, 8).toUpperCase();
 }
 
-// ---------- GET /api/invites (admin) ----------
+//GET /api/invites
 router.get('/invites', requireAuth, async (req, res) => {
     if (!isAdmin(req)) return res.status(403).json({ status: 'error', message: 'Лише для адміна' });
     const rows = await prisma.invite.findMany({ orderBy: { createdAt: 'desc' } });
     res.json(rows);
 });
 
-// ---------- POST /api/invites (admin) body: { minutes?: number } ----------
+// POST /api/invites (admin) body: { minutes?: number }
 router.post('/invites', requireAuth, async (req, res) => {
     if (!isAdmin(req)) return res.status(403).json({ status: 'error', message: 'Лише для адміна' });
     const minutes = ttlMinutesFrom(req);
@@ -59,7 +56,7 @@ router.post('/invites', requireAuth, async (req, res) => {
     res.status(201).json(row);
 });
 
-// ---------- DELETE /api/invites/:key (admin) — key = id або code ----------
+// DELETE /api/invites/:key
 router.delete('/invites/:key', requireAuth, async (req, res) => {
     if (!isAdmin(req)) return res.status(403).json({ status: 'error', message: 'Лише для адміна' });
     const key = String(req.params.key);

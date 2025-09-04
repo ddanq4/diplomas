@@ -23,7 +23,6 @@ async function start() {
     console.log(`[DB] OK → ${host}:${p}/${db}`);
   } catch (e) {
     console.error('[DB] FAILED →', e.message);
-    console.error('       Проверь DATABASE_URL, порт и миграции.');
   }
 
   app.listen(port, () => {
