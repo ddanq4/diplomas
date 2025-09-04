@@ -280,19 +280,36 @@ router.get('/diplomas/:id', async (req, res, next) => {
 // GET /api/diplomas/:id/file
 router.get('/diplomas/:id/file', async (req, res, next) => {
   try {
-    const where = { id: String(req.params.id).trim() }; // у тебя id строковый
-    const row = await prisma.diploma.findUnique({ where });
+    const id = String(req.params.id || '').trim();
+    if (!id) return res.status(400).json({ message: 'Invalid id' });
+
+    // 1) сначала пытаемся отдать файл по фиксированному имени /uploads/<id>.(pdf|jpg|jpeg|png)
+    const candidates = ['.pdf', '.jpg', '.jpeg', '.png']
+        .map(ext => path.join(process.cwd(), 'uploads', `${id}${ext}`));
+    for (const abs of candidates) {
+      if (fs.existsSync(abs)) {
+        res.set('Cache-Control', 'no-store, max-age=0');
+        // на всякий лог, чтобы увидеть какой путь реально отдали
+        console.log('[GET diplomas:file] serve fixed', abs);
+        return res.sendFile(abs);
+      }
+    }
+
+    // 2) если фиксированного файла нет — используем путь из БД (обратная совместимость)
+    const row = await prisma.diploma.findUnique({ where: { id } });
     if (!row?.fileUrl) return res.status(404).json({ message: 'Not Found' });
 
-    // поддержка '/uploads/xxx' или 'uploads/xxx'
     const rel = String(row.fileUrl).replace(/^\/+/, '');
     const fileRel = rel.startsWith('uploads') ? rel : path.join('uploads', rel);
     const abs = path.resolve(process.cwd(), fileRel);
-
     if (!fs.existsSync(abs)) return res.status(404).json({ message: 'Not Found' });
+
+    res.set('Cache-Control', 'no-store, max-age=0');
+    console.log('[GET diplomas:file] serve db', abs);
     return res.sendFile(abs);
   } catch (e) { next(e); }
 });
+
 
 // CREATE
 router.post('/diplomas', acceptAnyFiles, async (req, res, next) => {
@@ -331,53 +348,113 @@ router.post('/diplomas', acceptAnyFiles, async (req, res, next) => {
   }
 });
 
-// UPDATE
-router.patch('/diplomas/:id', upload.single('file'), async (req, res, next) => {  try {
-    const id = idStr(req.params.id);
-    if (!id || id === 'undefined' || id === 'null') return res.status(400).json({ message: 'Invalid id' });
+// UPDATE — надежный, с логами и любым источником файла
+router.patch('/diplomas/:id', acceptAnyFiles, async (req, res, next) => {
+  try {
+    const id = String(req.params.id || '').trim();
+    if (!id) return res.status(400).json({ message: 'Invalid id' });
 
     const existing = await prisma.diploma.findUnique({ where: { id } });
     if (!existing) return res.status(404).json({ message: 'Not found' });
-  const b = req.body || {};
-  const studentName   = b.studentName   ?? b.student_name;
-  const faculty       = b.faculty       ?? b.faculty_key;
-  const specialty     = b.specialty     ?? b.specialty_key;
-  const year          = b.year          ?? b.year_value;
-  const diplomaNumber = b.diplomaNumber ?? b.diploma_number;
-  const isVerified    = b.isVerified    ?? b.is_verified;
 
-  const data = {};
-  if (studentName !== undefined)   data.studentName   = String(studentName);
-  if (faculty !== undefined)       data.faculty       = faculty || null;
-  if (specialty !== undefined)     data.specialty     = specialty || null;
-  if (year !== undefined)          data.year          = Number(year);
-  if (diplomaNumber !== undefined) data.diplomaNumber = String(diplomaNumber);
-  if (isVerified !== undefined)    data.isVerified    = (isVerified==='true'||isVerified===true||isVerified==='1'||isVerified===1);
-  if (req.file) {
-              data.fileUrl = `/uploads/${req.file.filename}`;
-        }
-    if (req.body.specialty) {
-      const specKey = String(req.body.specialty).trim();
-      const known = Object.values(FACULTIES).some(fac =>
-          (fac.specialties || []).map(normSpec).some(s => s.key === specKey)
-      );
-      if (!known) return res.status(400).json({ message: 'Unknown specialty (not in catalog)' });
-      data.specialty = specKey;
+    // --- диагностика того, что реально приходит ---
+    console.log('[PATCH diplomas] CT=', req.headers['content-type']);
+    console.log('[PATCH diplomas] has req.file =', !!req.file, ' has req.files =', Array.isArray(req.files) ? req.files.length : 0);
+    if (req.file) {
+      console.log('[PATCH diplomas] req.file =', {
+        fieldname: req.file.fieldname, filename: req.file.filename, path: req.file.path, size: req.file.size, mimetype: req.file.mimetype, originalname: req.file.originalname
+      });
+    } else if (Array.isArray(req.files) && req.files[0]) {
+      const f = req.files[0];
+      console.log('[PATCH diplomas] req.files[0] =', {
+        fieldname: f.fieldname, filename: f.filename, path: f.path, size: f.size, mimetype: f.mimetype, originalname: f.originalname
+      });
     }
 
-    let fileUrl = validateAndStoreFileFromAnySource(req);
-    if (!fileUrl) fileUrl = validateAndStoreBase64FromBody(req);
-    if (fileUrl) data.fileUrl = fileUrl;
+    // --- поля (camel + snake) ---
+    const b = req.body || {};
+    const studentName   = b.studentName   ?? b.student_name;
+    const faculty       = b.faculty       ?? b.faculty_key;
+    const specialty     = b.specialty     ?? b.specialty_key;
+    const year          = b.year          ?? b.year_value;
+    const diplomaNumber = b.diplomaNumber ?? b.diploma_number;
+    const isVerified    = b.isVerified    ?? b.is_verified;
+
+    const data = {};
+    if (studentName !== undefined)   data.studentName   = String(studentName);
+    if (faculty !== undefined)       data.faculty       = faculty || null;
+    if (specialty !== undefined)     data.specialty     = specialty || null;
+    if (year !== undefined)          data.year          = Number(year);
+    if (diplomaNumber !== undefined) data.diplomaNumber = String(diplomaNumber);
+    if (isVerified !== undefined)    data.isVerified    = (isVerified==='true'||isVerified===true||isVerified==='1'||isVerified===1);
+
+    // === ФАЙЛ: сперва пытаемся через multer, если пусто — через express-fileupload/base64 ===
+    let newFileUrl = null;
+
+// 1) Multer: req.file или req.files (array)
+    if (req.file || (Array.isArray(req.files) && req.files.length)) {
+      const f = req.file || req.files[0];
+      const srcPath = f.path || (f.filename ? path.join(uploadDir, f.filename) : null);
+      const orig = f.originalname || f.filename || '';
+      let ext = (path.extname(orig) || '').toLowerCase();
+      if (!ext) {
+        const mt = String(f.mimetype || '').toLowerCase();
+        if (mt === 'image/jpeg') ext = '.jpg';
+        else if (mt === 'image/png') ext = '.png';
+        else if (mt === 'application/pdf') ext = '.pdf';
+        else ext = '.bin';
+      }
+      // Кладём под фиксированным именем по id
+      await fs.promises.mkdir(uploadDir, { recursive: true });
+      const fixedAbs = path.join(uploadDir, `${id}${ext}`);
+      if (srcPath) {
+        await fs.promises.rename(srcPath, fixedAbs).catch(async () => {
+          const buf = await fs.promises.readFile(srcPath);
+          await fs.promises.writeFile(fixedAbs, buf);
+          await fs.promises.unlink(srcPath).catch(() => {});
+        });
+      } else if (f.buffer) {
+        await fs.promises.writeFile(fixedAbs, f.buffer);
+      }
+      newFileUrl = `/uploads/${id}${ext}`;
+      console.log('[PATCH diplomas] multer ->', newFileUrl);
+    }
+
+// 2) Если multer ничего не дал — пробуем express-fileupload (object) / base64
+    if (!newFileUrl) {
+      // эта утилита уже у тебя есть и умеет: req.files (object, express-fileupload) + валидацию + сохранение
+      const tmpRel = validateAndStoreFileFromAnySource(req) || validateAndStoreBase64FromBody(req);
+      if (tmpRel) {
+        // можно оставить tmpRel как есть (проще всего)
+        newFileUrl = tmpRel;
+        console.log('[PATCH diplomas] fallback ->', newFileUrl,
+            ' req.files type=', typeof req.files,
+            !Array.isArray(req.files) && req.files ? Object.keys(req.files) : null);
+      }
+    }
+
+// 3) Если что-то сохранили — обновляем запись
+    if (newFileUrl) {
+      data.fileUrl = newFileUrl;                 // ВАЖНО: имя поля как в Prisma (camelCase)
+      if ('updatedAt' in existing) data.updatedAt = new Date();
+      console.log('[PATCH diplomas] SET fileUrl =', data.fileUrl);
+    } else {
+      console.log('[PATCH diplomas] no file provided (multer/express-fileupload/base64)');
+    }
+
+    console.log('[PATCH diplomas] data keys ->', Object.keys(data));
 
     const updated = await prisma.diploma.update({ where: { id }, data });
-    res.json(updated);
+    console.log('[PATCH diplomas] updated.fileUrl =', updated.fileUrl);
+    return res.json(updated);
+
   } catch (e) {
-    const code = e?.code || e?.message || '';
-    if (code.includes('INVALID_FILE_TYPE')) return res.status(400).json({ message: 'INVALID_FILE_TYPE' });
-    if (code.includes('FILE_TOO_LARGE'))   return res.status(400).json({ message: 'FILE_TOO_LARGE' });
+    console.error('[PATCH diplomas] ERROR', e);
     next(e);
   }
 });
+
+
 
 // DELETE
 router.delete('/diplomas/:id', async (req, res, next) => {
